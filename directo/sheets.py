@@ -1,7 +1,8 @@
 """sheets module"""
 from googleapiclient.discovery import build
-from pprint import pprint
 from directo.auth import get_creds, SCOPES_RO
+from jinja2 import Template
+import logging
 
 
 def read_sheet_range(sheet_id, sheet_range):
@@ -25,71 +26,125 @@ def format_name(item):
     return f"{item['name_last']}, {item['name_first']}"
 
 
+def format_address(parent_data):
+    template = Template(
+        """
+{{name_first}} {{name_last}}
+{% if address is defined -%}
+{{address}}
+{% endif %}
+{%- if city is defined -%}
+{{city}} {{state}} {{zip}}
+{% endif %}
+{%- if email is defined -%}
+{{email}}
+{% endif %}
+{%- if phone is defined -%}
+{{phone}}
+{% endif %}
+"""
+    )
+    return template.render(parent_data).strip()
+
+
 class SheetData(object):
-    def __init__(self, sheet_id):
+    def __init__(self, sheet_id, header_range, data_range):
         self.sheet_id = sheet_id
-        self.header_range = construct_sheet_range(
-            tab_name="Sheet1", col_start="A", col_end="Z", row_start="1", row_end="1"
+        self.header_range = header_range
+        self.data_range = data_range
+        self.read_sheet_headers()
+        self.read_sheet_data()
+        self.structure_data()
+
+    def read_sheet_headers(self):
+        self.headers = read_sheet_range(self.sheet_id, self.header_range)["values"][0]
+
+    def read_sheet_data(self):
+        self.data = read_sheet_range(self.sheet_id, self.data_range)["values"]
+
+    def structure_data(self):
+        self.data_structured = list(
+            map(lambda d: dict(zip(self.headers, d)), self.data)
         )
-        self.data_range = construct_sheet_range(
-            tab_name="Sheet1", col_start="A", col_end="Z", row_start="2", row_end=""
-        )
-
-    def get_sheet_header(self):
-        return read_sheet_range(self.sheet_id, self.header_range)["values"][0]
-
-    def get_sheet_data(self):
-        return read_sheet_range(self.sheet_id, self.data_range)["values"]
-
-    def get_sheet_items(self):
-        headers = self.get_sheet_header()
-        data = self.get_sheet_data()
-        return list(map(lambda d: dict(zip(headers, d)), data))
 
 
 class RosterSheetData(SheetData):
-    def __init__(self, sheet_id):
-        self.sheet_id = sheet_id
+    def __init__(self, sheet_id, header_range, data_range):
+        super().__init__(sheet_id, header_range, data_range)
         self.children = {}
-        self.header_range = construct_sheet_range(
-            tab_name="Sheet1", col_start="A", col_end="D", row_start="1", row_end="1"
-        )
-        self.data_range = construct_sheet_range(
-            tab_name="Sheet1", col_start="A", col_end="D", row_start="2", row_end=""
-        )
+        self.read()
 
-    def parse_child_from_item(self, row_data):
+    def parse_child_from_item(self, item):
         child_attributes = [
             "name_last",
             "name_first",
             "grade",
             "teacher_hr",
         ]
-        child = dict([(k, v) for k, v in row_data.items() if k in child_attributes])
+        child = dict([(k, v) for k, v in item.items() if k in child_attributes])
         result = {}
         result[format_name(child)] = child
         return result
 
     def read(self):
         """make a list of children with their data and their parent/guardian info"""
-        for item in self.get_sheet_items():
+        for item in self.data_structured:
             child = self.parse_child_from_item(item)
             self.children.update(child)
 
+    def enrich_roster_with_normalized_directory(self, directory_data):
+        self.children_enriched = self.children.copy()
+        for child_name, child_data in self.children_enriched.items():
+            try:
+                child_data.update(directory_data.children[child_name])
+            except KeyError:
+                logging.debug("Child not in directory data")
+            try:
+                child_parents = [
+                    directory_data.parents[p] for p in child_data["parents"]
+                ]
+                child_data["parents"] = child_parents
+            except KeyError:
+                logging.debug("No parents listed for child in directory data")
+
+    def by_teacher_grade(self):
+        teacher_grades = sorted(
+            set(
+                [
+                    (v["teacher_hr"], v["grade"])
+                    for k, v in self.children_enriched.items()
+                ]
+            ),
+            key=lambda x: x[1],
+        )
+        result = {}
+        for tg in teacher_grades:
+            result[f"{tg[1]} - {tg[0]}"] = [
+                k for k, v in self.children_enriched.items() if v["teacher_hr"] == tg[0]
+            ]
+        return result
+
+    def by_student_with_parents(self):
+        result = {}
+        for child_name, child_data in self.children_enriched.items():
+            try:
+                parents_formatted = "\n\n".join(
+                    [format_address(p) for p in child_data["parents"]]
+                )
+            except KeyError:
+                parents_formatted = ""
+            result[f"{child_name} - {child_data['grade']}"] = parents_formatted
+        return result
+
 
 class DirectorySheetData(SheetData):
-    def __init__(self, sheet_id):
-        self.sheet_id = sheet_id
+    def __init__(self, sheet_id, header_range, data_range):
+        super().__init__(sheet_id, header_range, data_range)
         self.children = {}
         self.parents = {}
-        self.header_range = construct_sheet_range(
-            tab_name="combined", col_start="E", col_end="AD", row_start="1", row_end="1"
-        )
-        self.data_range = construct_sheet_range(
-            tab_name="combined", col_start="E", col_end="AD", row_start="2", row_end=""
-        )
+        self.converge_data()
 
-    def parse_parents_from_item(self, row_data):
+    def parse_parents_from_item(self, item):
         parent_a_attributes = [
             "name_last_parent_guardian_a",
             "name_first_parent_guardian_a",
@@ -103,7 +158,7 @@ class DirectorySheetData(SheetData):
         parent_a = dict(
             [
                 (k.replace("_parent_guardian_a", ""), v)
-                for k, v in row_data.items()
+                for k, v in item.items()
                 if k in parent_a_attributes and v != ""
             ]
         )
@@ -120,7 +175,7 @@ class DirectorySheetData(SheetData):
         parent_b = dict(
             [
                 (k.replace("_parent_guardian_b", ""), v)
-                for k, v in row_data.items()
+                for k, v in item.items()
                 if k in parent_b_attributes and v != ""
             ]
         )
@@ -130,7 +185,7 @@ class DirectorySheetData(SheetData):
             result[format_name(parent_b)] = parent_b
         return result
 
-    def parse_children_from_item(self, row_data):
+    def parse_children_from_item(self, item):
         child_a_attributes = [
             "name_last_child_a",
             "name_first_child_a",
@@ -141,7 +196,7 @@ class DirectorySheetData(SheetData):
         child_a = dict(
             [
                 (k.replace("_child_a", ""), v)
-                for k, v in row_data.items()
+                for k, v in item.items()
                 if k in child_a_attributes
             ]
         )
@@ -155,7 +210,7 @@ class DirectorySheetData(SheetData):
         child_b = dict(
             [
                 (k.replace("_child_b", ""), v)
-                for k, v in row_data.items()
+                for k, v in item.items()
                 if k in child_b_attributes
             ]
         )
@@ -165,9 +220,9 @@ class DirectorySheetData(SheetData):
             result[format_name(child_b)] = child_b
         return result
 
-    def parse_family_from_item(self, row_data):
-        parents = self.parse_parents_from_item(row_data)
-        children = self.parse_children_from_item(row_data)
+    def parse_family_from_item(self, item):
+        parents = self.parse_parents_from_item(item)
+        children = self.parse_children_from_item(item)
         for child_name, child_data in children.items():
             child_data["parents"] = list(set(parents.keys()))
         return {
@@ -177,7 +232,7 @@ class DirectorySheetData(SheetData):
 
     def converge_data(self):
         """make a list of children with their data and their parent/guardian info"""
-        for item in self.get_sheet_items():
+        for item in self.data_structured:
             family = self.parse_family_from_item(item)
             for child_name, child_data in family["children"].items():
                 if child_name not in self.children:

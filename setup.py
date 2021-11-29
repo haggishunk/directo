@@ -10,6 +10,7 @@ setup(
     author_email="travis@mattera.io",
     packages=find_packages(include=["directo", "directo.*"]),
     install_requires=[
+        "jinja2",
         "google-auth-oauthlib",
         "google-api-python-client",
         "google-auth-oauthlib",
