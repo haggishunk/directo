@@ -1,0 +1,5 @@
+.envrc
+token.json
+credentials.json
+__pycache__
+*.egg-info/
