@@ -1,12 +1,13 @@
 """sheets module"""
 from googleapiclient.discovery import build
-from directo.auth import get_creds, SCOPES_RO
+from directo.auth import get_creds, SCOPES_RW
 from jinja2 import Template
 import logging
 
 
+# api interaction
 def read_sheet_range(sheet_id, sheet_range):
-    service = build("sheets", "v4", credentials=get_creds(SCOPES_RO))
+    service = build("sheets", "v4", credentials=get_creds(SCOPES_RW))
     result = (
         service.spreadsheets()
         .values()
@@ -16,14 +17,23 @@ def read_sheet_range(sheet_id, sheet_range):
     return result
 
 
+# sheets types
 def construct_sheet_range(
     tab_name="Sheet1", col_start="A", col_end="Z", row_start="1", row_end=""
 ):
     return f"{tab_name}!{col_start}{row_start}:{col_end}{row_end}"
 
 
+# formatting funcs
 def format_name(item):
     return f"{item['name_last']}, {item['name_first']}"
+
+
+def format_addresses(parents_info):
+    try:
+        return "\n\n".join([format_address(p) for p in parents_info])
+    except KeyError:
+        return "\n"
 
 
 def format_address(parent_data):
@@ -45,6 +55,109 @@ def format_address(parent_data):
 """
     )
     return template.render(parent_data).strip()
+
+
+# data parsing
+def parse_parents_from_item(item):
+    parent_a_attributes = [
+        "name_last_parent_guardian_a",
+        "name_first_parent_guardian_a",
+        "email_parent_guardian_a",
+        "phone_parent_guardian_a",
+        "address_parent_guardian_a",
+        "city_parent_guardian_a",
+        "state_parent_guardian_a",
+        "zip_parent_guardian_a",
+    ]
+    parent_a = dict(
+        [
+            (k.replace("_parent_guardian_a", ""), v)
+            for k, v in item.items()
+            if k in parent_a_attributes and v != ""
+        ]
+    )
+    parent_b_attributes = [
+        "name_last_parent_guardian_b",
+        "name_first_parent_guardian_b",
+        "email_parent_guardian_b",
+        "phone_parent_guardian_b",
+        "address_parent_guardian_b",
+        "city_parent_guardian_b",
+        "state_parent_guardian_b",
+        "zip_parent_guardian_b",
+    ]
+    parent_b = dict(
+        [
+            (k.replace("_parent_guardian_b", ""), v)
+            for k, v in item.items()
+            if k in parent_b_attributes and v != ""
+        ]
+    )
+    result = {}
+    result[format_name(parent_a)] = parent_a
+    if "name_last" in parent_b:
+        result[format_name(parent_b)] = parent_b
+    return result
+
+
+def parse_children_from_item(item):
+    child_a_attributes = [
+        "name_last_child_a",
+        "name_first_child_a",
+        # "grade_child_a",
+        # "program_child_a",
+        # "teacher_hr_child_a",
+    ]
+    child_a = dict(
+        [
+            (k.replace("_child_a", ""), v)
+            for k, v in item.items()
+            if k in child_a_attributes
+        ]
+    )
+    child_b_attributes = [
+        "name_last_child_b",
+        "name_first_child_b",
+        # "grade_child_b",
+        # "program_child_b",
+        # "teacher_hr_child_b",
+    ]
+    child_b = dict(
+        [
+            (k.replace("_child_b", ""), v)
+            for k, v in item.items()
+            if k in child_b_attributes
+        ]
+    )
+    result = {}
+    result[format_name(child_a)] = child_a
+    if "name_last" in child_b:
+        result[format_name(child_b)] = child_b
+    return result
+
+
+def parse_family_from_item(item):
+    parents = parse_parents_from_item(item)
+    children = parse_children_from_item(item)
+    for child_name, child_data in children.items():
+        child_data["parents"] = list(set(parents.keys()))
+    return {
+        "children": children,
+        "parents": parents,
+    }
+
+
+def parse_child_from_item(item):
+    child_attributes = [
+        "name_last",
+        "name_first",
+        "grade",
+        "teacher_hr",
+    ]
+    child = dict([(k, v) for k, v in item.items() if k in child_attributes])
+    result = {}
+    result[format_name(child)] = child
+    return result
 
 
 class SheetData(object):
@@ -74,22 +187,10 @@ class RosterSheetData(SheetData):
         self.children = {}
         self.read()
 
-    def parse_child_from_item(self, item):
-        child_attributes = [
-            "name_last",
-            "name_first",
-            "grade",
-            "teacher_hr",
-        ]
-        child = dict([(k, v) for k, v in item.items() if k in child_attributes])
-        result = {}
-        result[format_name(child)] = child
-        return result
-
     def read(self):
         """make a list of children with their data and their parent/guardian info"""
         for item in self.data_structured:
-            child = self.parse_child_from_item(item)
+            child = parse_child_from_item(item)
             self.children.update(child)
 
     def enrich_roster_with_normalized_directory(self, directory_data):
@@ -103,37 +204,84 @@ class RosterSheetData(SheetData):
                 child_parents = [
                     directory_data.parents[p] for p in child_data["parents"]
                 ]
-                child_data["parents"] = child_parents
             except KeyError:
                 logging.debug("No parents listed for child in directory data")
+                child_parents = []
+            child_data["parents"] = child_parents
 
-    def by_teacher_grade(self):
-        teacher_grades = sorted(
-            set(
-                [
-                    (v["teacher_hr"], v["grade"])
-                    for k, v in self.children_enriched.items()
-                ]
-            ),
-            key=lambda x: x[1],
-        )
-        result = {}
-        for tg in teacher_grades:
-            result[f"{tg[1]} - {tg[0]}"] = [
-                k for k, v in self.children_enriched.items() if v["teacher_hr"] == tg[0]
+    def correlate_teachers_to_students(self, sort=False, sort_attribute="teacher_name"):
+        """returns objects with teacher, grade and students
+        object = {
+            "teacher_name": "bob smith",
+            "grade": "3",
+            "student_names": [
+                "jack",
+                "jill",
+
             ]
+        }
+        """
+        # group by teacher, grade
+        teacher_grades = set(
+            [(v["teacher_hr"], v["grade"]) for k, v in self.children.items()]
+        )
+        result = []
+        for teacher, grade in teacher_grades:
+            result.append(
+                {
+                    "teacher_name": teacher,
+                    "grade": grade,
+                    "students": [
+                        k
+                        for k, v in self.children.items()
+                        if v["teacher_hr"] == teacher
+                    ],
+                }
+            )
         return result
 
-    def by_student_with_parents(self):
-        result = {}
+    def correlate_students_to_parents(self, sort=False, sort_attribute="student_name"):
+        """returns objects with student, grade, parents info
+        object = {
+            "student_name": "jack",
+            "grade": "3",
+            "parents_info": "name\naddress\nemail\n\phone\n"
+        }
+        """
+        result = []
         for child_name, child_data in self.children_enriched.items():
-            try:
-                parents_formatted = "\n\n".join(
-                    [format_address(p) for p in child_data["parents"]]
+            result.append(
+                {
+                    "student_name": child_name,
+                    "grade": child_data["grade"],
+                    "parents_info": format_addresses(child_data["parents"]),
+                }
+            )
+        if sort:
+            result = sorted(result, key=lambda x: x[sort_attribute])
+        return result
+
+    def format_directory_data(self):
+        return [
+            (
+                {"text": f"{student['student_name']} - {student['grade']}\n\n"},
+                {"text": f"{student['parents_info']}"},
+            )
+            for student in self.correlate_students_to_parents(sort=True)
+        ]
+
+    def format_roster_data(self):
+        result = []
+        for klass in self.correlate_teachers_to_students(
+            sort=True, sort_attribute="grade"
+        ):
+            students_formatted = "\n".join(klass["students"])
+            result.append(
+                (
+                    {"text": f"{klass['teacher_name']} - {klass['grade']}\n\n"},
+                    {"text": f"{students_formatted}"},
                 )
-            except KeyError:
-                parents_formatted = ""
-            result[f"{child_name} - {child_data['grade']}"] = parents_formatted
+            )
         return result
 
 
@@ -144,96 +292,10 @@ class DirectorySheetData(SheetData):
         self.parents = {}
         self.converge_data()
 
-    def parse_parents_from_item(self, item):
-        parent_a_attributes = [
-            "name_last_parent_guardian_a",
-            "name_first_parent_guardian_a",
-            "email_parent_guardian_a",
-            "phone_parent_guardian_a",
-            "address_parent_guardian_a",
-            "city_parent_guardian_a",
-            "state_parent_guardian_a",
-            "zip_parent_guardian_a",
-        ]
-        parent_a = dict(
-            [
-                (k.replace("_parent_guardian_a", ""), v)
-                for k, v in item.items()
-                if k in parent_a_attributes and v != ""
-            ]
-        )
-        parent_b_attributes = [
-            "name_last_parent_guardian_b",
-            "name_first_parent_guardian_b",
-            "email_parent_guardian_b",
-            "phone_parent_guardian_b",
-            "address_parent_guardian_b",
-            "city_parent_guardian_b",
-            "state_parent_guardian_b",
-            "zip_parent_guardian_b",
-        ]
-        parent_b = dict(
-            [
-                (k.replace("_parent_guardian_b", ""), v)
-                for k, v in item.items()
-                if k in parent_b_attributes and v != ""
-            ]
-        )
-        result = {}
-        result[format_name(parent_a)] = parent_a
-        if "name_last" in parent_b:
-            result[format_name(parent_b)] = parent_b
-        return result
-
-    def parse_children_from_item(self, item):
-        child_a_attributes = [
-            "name_last_child_a",
-            "name_first_child_a",
-            # "grade_child_a",
-            # "program_child_a",
-            # "teacher_hr_child_a",
-        ]
-        child_a = dict(
-            [
-                (k.replace("_child_a", ""), v)
-                for k, v in item.items()
-                if k in child_a_attributes
-            ]
-        )
-        child_b_attributes = [
-            "name_last_child_b",
-            "name_first_child_b",
-            # "grade_child_b",
-            # "program_child_b",
-            # "teacher_hr_child_b",
-        ]
-        child_b = dict(
-            [
-                (k.replace("_child_b", ""), v)
-                for k, v in item.items()
-                if k in child_b_attributes
-            ]
-        )
-        result = {}
-        result[format_name(child_a)] = child_a
-        if "name_last" in child_b:
-            result[format_name(child_b)] = child_b
-        return result
-
-    def parse_family_from_item(self, item):
-        parents = self.parse_parents_from_item(item)
-        children = self.parse_children_from_item(item)
-        for child_name, child_data in children.items():
-            child_data["parents"] = list(set(parents.keys()))
-        return {
-            "children": children,
-            "parents": parents,
-        }
-
     def converge_data(self):
         """make a list of children with their data and their parent/guardian info"""
         for item in self.data_structured:
-            family = self.parse_family_from_item(item)
+            family = parse_family_from_item(item)
             for child_name, child_data in family["children"].items():
                 if child_name not in self.children:
                     self.children[child_name] = child_data
