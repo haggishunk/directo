@@ -112,7 +112,7 @@ def reversed_insert_text_requests(content_append_indexes, cell_data_items):
     requests = []
     for index, data_item in indexes_and_items:
         requests.extend([insert_text_request(index, data) for data in data_item])
-    return reversed(requests)
+    return list(reversed(requests))
 
 
 def group_cell_data_items(
