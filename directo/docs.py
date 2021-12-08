@@ -1,6 +1,8 @@
 """docs module"""
 from googleapiclient.discovery import build
 from directo.auth import get_creds, SCOPES_RO, SCOPES_RW
+import logging
+import time
 
 
 # api interactions
@@ -25,9 +27,21 @@ def get_doc(doc_id, read_only=False):
     return doc["documentId"]
 
 
-def batch_update_doc(doc_id, body):
+def batch_update_doc(doc_id, requests):
     service = build("docs", "v1", credentials=get_creds(SCOPES_RW))
-    doc = service.documents().batchUpdate(documentId=doc_id, body=body).execute()
+    while len(requests) > 0:
+        request_group = []
+        for i in range(100):
+            try:
+                request_group.append(requests.pop(0))
+            except:
+                pass
+        doc = (
+            service.documents()
+            .batchUpdate(documentId=doc_id, body={"requests": request_group})
+            .execute()
+        )
+        time.sleep(1)
     return
 
 
@@ -46,11 +60,11 @@ def table_last_row_content_append_indexes(table):
 
 
 def last_table_index(doc_json):
-    table_start_indexes = []
-    for content in doc_json["body"]["content"]:
+    table_content_indexes = []
+    for i, content in enumerate(doc_json["body"]["content"]):
         if "table" in content:
-            table_start_indexes.append(content["startIndex"])
-    return table_start_indexes[-1]
+            table_content_indexes.append(i)
+    return table_content_indexes[-1]
 
 
 def all_cells_content_indexes(table_json, first_para_only=False):
@@ -60,7 +74,7 @@ def all_cells_content_indexes(table_json, first_para_only=False):
             if first_para_only:
                 content = cell["content"][0]
             else:
-                content = cell["content"]
+                content = cell
             result.append((content["startIndex"], content["endIndex"]))
     return result
 
@@ -76,22 +90,20 @@ def insert_table_request(rows, columns):
     }
 
 
-def update_table_style_request(style, table_range, table_index):
+def insert_text_request(text, index):
+    return {"insertText": {"text": text, "location": {"index": index}}}
+
+
+def update_table_style_request(style, table_range, table_start_index):
     return {
         "tableCellStyle": style,
         "fields": ",".join([f for f in style.keys()]),
         "tableRange": table_range,
-        "tableStart": table_index,
+        "tableStart": table_start_index,
     }
 
 
-def insert_text_request(index, data):
-    result = {"insertText": {"location": {"index": index}}}
-    result["insertText"].update(data)
-    return result
-
-
-def update_text_style_request(index_start, index_end, style):
+def update_text_style_request(style, index_start, index_end):
     return {
         "updateTextStyle": {
             "textStyle": style,
@@ -104,20 +116,35 @@ def update_text_style_request(index_start, index_end, style):
     }
 
 
+def update_paragraph_style_request(style, index_start, index_end):
+    return {
+        "updateParagraphStyle": {
+            "paragraphStyle": style,
+            "fields": ",".join([f for f in style.keys()]),
+            "range": {
+                "startIndex": index_start,
+                "endIndex": index_end,
+            },
+        }
+    }
+
+
 # collection manipulation
-def reversed_insert_text_requests(content_append_indexes, cell_data_items):
+def reversed_insert_text_requests(text_groups, content_append_indices):
     """make a list of text insertion requests in reverse (right to left) order
     since index mutates flowing forward (left to right)"""
-    indexes_and_items = list(zip(content_append_indexes, cell_data_items))
+    text_groups_with_indices = list(zip(text_groups, content_append_indices))
     requests = []
-    for index, data_item in indexes_and_items:
-        requests.extend([insert_text_request(index, data) for data in data_item])
+    for text_group, index in text_groups_with_indices:
+        requests_for_text_group = [
+            insert_text_request(text, index) for text in text_group
+        ]
+        logging.debug(requests_for_text_group)
+        requests.extend(requests_for_text_group)
     return list(reversed(requests))
 
 
-def group_cell_data_items(
-    cell_data_items, per_group, default_item_value=[{"text": "\n"}]
-):
+def group_cell_data_items(cell_data_items, per_group, default_item_value=("\n")):
     """cell data items are returned by this generator in lists with the requested per group size"""
     while len(cell_data_items) > 0:
         result = []
@@ -142,8 +169,8 @@ class DirectoryDoc(object):
         self.refresh_doc_json()
 
     def new_table(self, columns):
-        body = {"requests": [insert_table_request(rows=1, columns=columns)]}
-        self.batch_update(body)
+        requests = [insert_table_request(rows=1, columns=columns)]
+        self.batch_update(requests)
         self.activate_table(last_table_index(self.doc_json))
         self.refresh_table_json()
 
@@ -151,8 +178,8 @@ class DirectoryDoc(object):
         self.doc_id = get_doc(doc_id, read_only)
         self.refresh_doc_json()
 
-    def batch_update(self, body):
-        batch_update_doc(self.doc_id, body)
+    def batch_update(self, requests):
+        batch_update_doc(self.doc_id, requests)
         self.refresh_doc_json()
         try:
             self.refresh_table_json()
@@ -170,38 +197,35 @@ class DirectoryDoc(object):
 
     def refresh_table_json(self):
         """this can be done repeatedly to update table mutable data"""
-        self.active_table_json = self.doc_json["body"]["content"][self.table_index][
-            "table"
-        ]
+        table_content = self.doc_json["body"]["content"][self.table_index]
+        self.active_table_json = table_content["table"]
+        self.table_start_index = table_content["startIndex"]
         self.columns_count = self.active_table_json["columns"]
 
     def append_table_row(self):
-        body = {
-            "requests": [
-                {
-                    "insertTableRow": {
-                        "tableCellLocation": {
-                            "tableStartLocation": {"index": self.table_index},
-                            "rowIndex": table_last_row_index(self.active_table_json),
-                            "columnIndex": 1,
-                        },
-                        "insertBelow": "true",
-                    }
+        requests = [
+            {
+                "insertTableRow": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": self.table_start_index},
+                        "rowIndex": table_last_row_index(self.active_table_json),
+                        "columnIndex": 1,
+                    },
+                    "insertBelow": "true",
                 }
-            ]
-        }
-        self.batch_update(body)
+            }
+        ]
+        self.batch_update(requests)
         return
 
-    def fill_last_table_row(self, data_group):
+    def fill_last_table_row(self, text_groups):
         """sew together cell content append indexes with data for text insertion
         data_group complies with InsertText"""
         content_append_indexes = table_last_row_content_append_indexes(
             self.active_table_json
         )
-        requests = reversed_insert_text_requests(content_append_indexes, data_group)
-        body = {"requests": requests}
-        self.batch_update(body)
+        requests = reversed_insert_text_requests(text_groups, content_append_indexes)
+        self.batch_update(requests)
 
     def fill_table_with_data(self, data):
         for data_group in group_cell_data_items(data, self.columns_count):
@@ -209,15 +233,22 @@ class DirectoryDoc(object):
             self.append_table_row()
 
     def apply_text_style(self, style, first_para_only=False):
-        body = {
-            "requests": [
-                update_text_style_request(index_start, index_end, style)
-                for (index_start, index_end) in all_cells_content_indexes(
-                    self.active_table_json, first_para_only=first_para_only
-                )
-            ]
-        }
-        self.batch_update(body)
+        requests = [
+            update_text_style_request(style, index_start, index_end)
+            for (index_start, index_end) in all_cells_content_indexes(
+                self.active_table_json, first_para_only=first_para_only
+            )
+        ]
+        self.batch_update(requests)
+
+    def apply_paragraph_style(self, style, first_para_only=False):
+        requests = [
+            update_paragraph_style_request(style, index_start, index_end)
+            for (index_start, index_end) in all_cells_content_indexes(
+                self.active_table_json, first_para_only=first_para_only
+            )
+        ]
+        self.batch_update(requests)
 
     def bold_cells_first_line(self):
         style = {"bold": True}
@@ -229,3 +260,10 @@ class DirectoryDoc(object):
             "weightedFontFamily": {"fontFamily": font_family, "weight": 400},
         }
         self.apply_text_style(style)
+
+    def unbroken_cells(self):
+        style = {
+            "keepLinesTogether": True,
+            "keepWithNext": True,
+        }
+        self.apply_paragraph_style(style)
