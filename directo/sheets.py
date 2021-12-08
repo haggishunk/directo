@@ -5,6 +5,18 @@ from jinja2 import Template
 import logging
 
 
+# const
+
+GRADE_REPR = {
+    "0": "K",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "5": "5",
+}
+
+
 # api interaction
 def read_sheet_range(sheet_id, sheet_range):
     service = build("sheets", "v4", credentials=get_creds(SCOPES_RW))
@@ -30,10 +42,10 @@ def format_name(item):
 
 
 def format_addresses(parents_info):
-    try:
-        return "\n\n".join([format_address(p) for p in parents_info])
-    except KeyError:
-        return "\n"
+    result = "\n\n".join([format_address(p) for p in parents_info])
+    if result == "":
+        result = "\n"  # docs api requires non-empty string for text inserts
+    return result
 
 
 def format_address(parent_data):
@@ -153,6 +165,7 @@ def parse_child_from_item(item):
         "name_first",
         "grade",
         "teacher_hr",
+        "language",
     ]
     child = dict([(k, v) for k, v in item.items() if k in child_attributes])
     result = {}
@@ -209,11 +222,14 @@ class RosterSheetData(SheetData):
                 child_parents = []
             child_data["parents"] = child_parents
 
-    def correlate_teachers_to_students(self, sort=False, sort_attribute="teacher_name"):
+    def correlate_teachers_to_students(
+        self, sort=False, sort_attribute="index_slug", grade="all"
+    ):
         """returns objects with teacher, grade and students
         object = {
             "teacher_name": "bob smith",
             "grade": "3",
+            "language": "Spanish"
             "student_names": [
                 "jack",
                 "jill",
@@ -221,23 +237,35 @@ class RosterSheetData(SheetData):
             ]
         }
         """
+        if grade == "all":
+            grades = ["0", "1", "2", "3", "4", "5"]
+        else:
+            grades = [grade]
         # group by teacher, grade
         teacher_grades = set(
-            [(v["teacher_hr"], v["grade"]) for k, v in self.children.items()]
+            [
+                (v["teacher_hr"], v["grade"], v["language"])
+                for k, v in self.children.items()
+            ]
         )
         result = []
-        for teacher, grade in teacher_grades:
-            result.append(
-                {
-                    "teacher_name": teacher,
-                    "grade": grade,
-                    "students": [
-                        k
-                        for k, v in self.children.items()
-                        if v["teacher_hr"] == teacher
-                    ],
-                }
-            )
+        for teacher, grade, language in teacher_grades:
+            if grade in grades:
+                result.append(
+                    {
+                        "index_slug": f"{grade}-{language}-{teacher}",
+                        "teacher_name": teacher,
+                        "grade": grade,
+                        "language": language,
+                        "students": [
+                            k
+                            for k, v in self.children.items()
+                            if v["teacher_hr"] == teacher
+                        ],
+                    }
+                )
+        if sort:
+            result = sorted(result, key=lambda x: x[sort_attribute])
         return result
 
     def correlate_students_to_parents(self, sort=False, sort_attribute="student_name"):
@@ -262,24 +290,25 @@ class RosterSheetData(SheetData):
         return result
 
     def format_directory_data(self):
+        """returns a sorted list of text groups headed by student name/grade
+        followed by parents info"""
         return [
             (
-                {"text": f"{student['student_name']} - {student['grade']}\n\n"},
-                {"text": f"{student['parents_info']}"},
+                f"{student['student_name']} - {GRADE_REPR[student['grade']]}\n\n",
+                f"{student['parents_info']}",
             )
             for student in self.correlate_students_to_parents(sort=True)
         ]
 
-    def format_roster_data(self):
+    def format_roster_data(self, grade="all"):
         result = []
-        for klass in self.correlate_teachers_to_students(
-            sort=True, sort_attribute="grade"
-        ):
+        for klass in self.correlate_teachers_to_students(sort=True, grade=grade):
+            grade_formatted = GRADE_REPR[klass["grade"]]
             students_formatted = "\n".join(klass["students"])
             result.append(
                 (
-                    {"text": f"{klass['teacher_name']} - {klass['grade']}\n\n"},
-                    {"text": f"{students_formatted}"},
+                    f"{klass['teacher_name']} - {grade_formatted} - {klass['language']}\n\n",
+                    f"{students_formatted}",
                 )
             )
         return result
