@@ -34,9 +34,9 @@ def batch_update_doc(doc_id, requests):
         for i in range(100):
             try:
                 request_group.append(requests.pop(0))
-            except:
+            except Exception:
                 pass
-        doc = (
+        _ = (
             service.documents()
             .batchUpdate(documentId=doc_id, body={"requests": request_group})
             .execute()
