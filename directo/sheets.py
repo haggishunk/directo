@@ -38,7 +38,7 @@ def construct_sheet_range(
 
 # formatting funcs
 def format_name(item):
-    return f"{item['name_last']}, {item['name_first']}"
+    return f"{item['name_last'].strip()}, {item['name_first'].strip()}"
 
 
 def format_addresses(parents_info):
