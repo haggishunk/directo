@@ -2,7 +2,6 @@
 import os
 import sys
 import logging
-from pprint import pprint
 from directo.sheets import (
     DirectorySheetData,
     RosterSheetData,
