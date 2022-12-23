@@ -212,13 +212,13 @@ class RosterSheetData(SheetData):
             try:
                 child_data.update(directory_data.children[child_name])
             except KeyError:
-                logging.debug("Child not in directory data")
+                logging.info("Child not in directory data")
             try:
                 child_parents = [
                     directory_data.parents[p] for p in child_data["parents"]
                 ]
             except KeyError:
-                logging.debug("No parents listed for child in directory data")
+                logging.info("No parents listed for child in directory data")
                 child_parents = []
             child_data["parents"] = child_parents
 
