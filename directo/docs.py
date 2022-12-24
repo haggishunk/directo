@@ -31,7 +31,7 @@ def batch_update_doc(doc_id, requests):
     service = build("docs", "v1", credentials=get_creds(SCOPES_RW))
     while len(requests) > 0:
         request_group = []
-        for i in range(100):
+        for _ in range(100):
             try:
                 request_group.append(requests.pop(0))
             except Exception:
@@ -97,7 +97,7 @@ def insert_text_request(text, index):
 def update_table_style_request(style, table_range, table_start_index):
     return {
         "tableCellStyle": style,
-        "fields": ",".join([f for f in style.keys()]),
+        "fields": ",".join(list(style.keys())),
         "tableRange": table_range,
         "tableStart": table_start_index,
     }
@@ -107,7 +107,7 @@ def update_text_style_request(style, index_start, index_end):
     return {
         "updateTextStyle": {
             "textStyle": style,
-            "fields": ",".join([f for f in style.keys()]),
+            "fields": ",".join(list(style.keys())),
             "range": {
                 "startIndex": index_start,
                 "endIndex": index_end,
@@ -120,7 +120,7 @@ def update_paragraph_style_request(style, index_start, index_end):
     return {
         "updateParagraphStyle": {
             "paragraphStyle": style,
-            "fields": ",".join([f for f in style.keys()]),
+            "fields": ",".join(list(style.keys())),
             "range": {
                 "startIndex": index_start,
                 "endIndex": index_end,
@@ -158,7 +158,12 @@ def group_cell_data_items(cell_data_items, per_group, default_item_value=("\n"))
 
 class DirectoryDoc(object):
     def __init__(self):
-        pass
+        self.doc_id = None
+        self.doc_json = None
+        self.table_index = None
+        self.active_table_json = None
+        self.table_start_index = None
+        self.columns_count = None
 
     def new(self, title):
         body = {
@@ -183,7 +188,7 @@ class DirectoryDoc(object):
         self.refresh_doc_json()
         try:
             self.refresh_table_json()
-        except:
+        except Exception:
             pass
 
     def refresh_doc_json(self):

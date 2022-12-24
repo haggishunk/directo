@@ -38,16 +38,21 @@ def make_student_directory(roster_data):
     return
 
 
-def get_directory_data(tab_name=None, col_start=None, col_end=None,
-                       row_start=None):
+def get_directory_data(tab_name=None, col_start=None, col_end=None, row_start=None):
     directory_header_range = construct_sheet_range(
-        tab_name=tab_name, col_start=col_start, col_end=col_end,
-        row_start=row_start, row_end=row_start
+        tab_name=tab_name,
+        col_start=col_start,
+        col_end=col_end,
+        row_start=row_start,
+        row_end=row_start,
     )
     data_row_start = str(int(row_start) + 1)
     directory_data_range = construct_sheet_range(
-        tab_name=tab_name, col_start=col_start, col_end=col_end,
-        row_start=data_row_start, row_end=""
+        tab_name=tab_name,
+        col_start=col_start,
+        col_end=col_end,
+        row_start=data_row_start,
+        row_end="",
     )
     return DirectorySheetData(
         directory_sheet_id, directory_header_range, directory_data_range
@@ -56,17 +61,21 @@ def get_directory_data(tab_name=None, col_start=None, col_end=None,
 
 def get_roster_data(tab_name=None, col_start=None, col_end=None, row_start=None):
     roster_header_range = construct_sheet_range(
-        tab_name=tab_name, col_start=col_start, col_end=col_end,
-        row_start=row_start, row_end=row_start
+        tab_name=tab_name,
+        col_start=col_start,
+        col_end=col_end,
+        row_start=row_start,
+        row_end=row_start,
     )
     data_row_start = str(int(row_start) + 1)
     roster_data_range = construct_sheet_range(
-        tab_name=tab_name, col_start=col_start, col_end=col_end,
-        row_start=data_row_start, row_end=""
+        tab_name=tab_name,
+        col_start=col_start,
+        col_end=col_end,
+        row_start=data_row_start,
+        row_end="",
     )
-    return RosterSheetData(
-        roster_sheet_id, roster_header_range, roster_data_range
-    )
+    return RosterSheetData(roster_sheet_id, roster_header_range, roster_data_range)
 
 
 def main():
@@ -78,14 +87,20 @@ def main():
         log_level = logging.WARN
     logging.basicConfig(level=log_level, stream=sys.stdout)
 
-    roster_data = get_roster_data(tab_name="Sheet1", col_start="A", col_end="E", row_start="1")
+    roster_data = get_roster_data(
+        tab_name="Sheet1", col_start="A", col_end="E", row_start="1"
+    )
 
     if sys.argv[1] == "roster":
         print("Compiling roster...")
         make_class_roster(roster_data)
     elif sys.argv[1] == "directory":
         print("Compiling directory...")
-        roster_data.enrich_roster_with_normalized_directory(get_directory_data(tab_name="working", col_start="E", col_end="AD", row_start="1"))
+        roster_data.enrich_roster_with_normalized_directory(
+            get_directory_data(
+                tab_name="working", col_start="E", col_end="AD", row_start="1"
+            )
+        )
         make_student_directory(roster_data)
 
 

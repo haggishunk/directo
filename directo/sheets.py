@@ -20,13 +20,12 @@ GRADE_REPR = {
 # api interaction
 def read_sheet_range(sheet_id, sheet_range):
     service = build("sheets", "v4", credentials=get_creds(SCOPES_RW))
-    result = (
+    return (
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=sheet_range)
         .execute()
     )
-    return result
 
 
 # sheets types
@@ -82,11 +81,11 @@ def parse_parents_from_item(item):
         "zip_parent_guardian_a",
     ]
     parent_a = dict(
-        [
-            (k.replace("_parent_guardian_a", ""), v)
-            for k, v in item.items()
+        {
+            k.replace("_parent_guardian_a", ""): v
+            for (k, v) in item.items()
             if k in parent_a_attributes and v != ""
-        ]
+        }
     )
     parent_b_attributes = [
         "name_last_parent_guardian_b",
@@ -98,13 +97,12 @@ def parse_parents_from_item(item):
         "state_parent_guardian_b",
         "zip_parent_guardian_b",
     ]
-    parent_b = dict(
-        [
-            (k.replace("_parent_guardian_b", ""), v)
-            for k, v in item.items()
-            if k in parent_b_attributes and v != ""
-        ]
-    )
+    parent_b = {
+        k.replace("_parent_guardian_b", ""): v
+        for (k, v) in item.items()
+        if k in parent_b_attributes and v != ""
+    }
+
     result = {}
     result[format_name(parent_a)] = parent_a
     if "name_last" in parent_b:
@@ -120,13 +118,12 @@ def parse_children_from_item(item):
         # "program_child_a",
         # "teacher_hr_child_a",
     ]
-    child_a = dict(
-        [
-            (k.replace("_child_a", ""), v)
-            for k, v in item.items()
-            if k in child_a_attributes
-        ]
-    )
+    child_a = {
+        (k.replace("_child_a", ""), v)
+        for k, v in item.items()
+        if k in child_a_attributes
+    }
+
     child_b_attributes = [
         "name_last_child_b",
         "name_first_child_b",
@@ -134,13 +131,12 @@ def parse_children_from_item(item):
         # "program_child_b",
         # "teacher_hr_child_b",
     ]
-    child_b = dict(
-        [
-            (k.replace("_child_b", ""), v)
-            for k, v in item.items()
-            if k in child_b_attributes
-        ]
-    )
+    child_b = {
+        (k.replace("_child_b", ""), v)
+        for k, v in item.items()
+        if k in child_b_attributes
+    }
+
     result = {}
     result[format_name(child_a)] = child_a
     if "name_last" in child_b:
@@ -151,7 +147,7 @@ def parse_children_from_item(item):
 def parse_family_from_item(item):
     parents = parse_parents_from_item(item)
     children = parse_children_from_item(item)
-    for child_name, child_data in children.items():
+    for _, child_data in children.items():
         child_data["parents"] = list(set(parents.keys()))
     return {
         "children": children,
@@ -167,7 +163,7 @@ def parse_child_from_item(item):
         "teacher_hr",
         "language",
     ]
-    child = dict([(k, v) for k, v in item.items() if k in child_attributes])
+    child = {k: v for (k, v) in item.items() if k in child_attributes}
     result = {}
     result[format_name(child)] = child
     return result
@@ -198,6 +194,7 @@ class RosterSheetData(SheetData):
     def __init__(self, sheet_id, header_range, data_range):
         super().__init__(sheet_id, header_range, data_range)
         self.children = {}
+        self.children_enriched = {}
         self.read()
 
     def read(self):
@@ -242,21 +239,20 @@ class RosterSheetData(SheetData):
         else:
             grades = [grade]
         # group by teacher, grade
-        teacher_grades = set(
-            [
-                (v["teacher_hr"], v["grade"], v["language"])
-                for k, v in self.children.items()
-            ]
-        )
+        teacher_grades = {
+            (v["teacher_hr"], v["grade"], v["language"])
+            for k, v in self.children.items()
+        }
+
         result = []
-        for teacher, grade, language in teacher_grades:
-            if grade in grades:
+        for teacher, teacher_grade, teacher_language in teacher_grades:
+            if teacher_grade in grades:
                 result.append(
                     {
-                        "index_slug": f"{grade}-{language}-{teacher}",
+                        "index_slug": f"{teacher_grade}-{teacher_language}-{teacher}",
                         "teacher_name": teacher,
-                        "grade": grade,
-                        "language": language,
+                        "grade": teacher_grade,
+                        "language": teacher_language,
                         "students": [
                             k
                             for k, v in self.children.items()
@@ -273,7 +269,7 @@ class RosterSheetData(SheetData):
         object = {
             "student_name": "jack",
             "grade": "3",
-            "parents_info": "name\naddress\nemail\n\phone\n"
+            "parents_info": "name\naddress\nemail\nphone\n"
         }
         """
         result = []
