@@ -87,6 +87,7 @@ def parse_parents_from_item(item):
             if k in parent_a_attributes and v != ""
         }
     )
+    logging.debug(f"parent_a_preformatted: {parent_a}")
     parent_b_attributes = [
         "name_last_parent_guardian_b",
         "name_first_parent_guardian_b",
@@ -102,6 +103,7 @@ def parse_parents_from_item(item):
         for (k, v) in item.items()
         if k in parent_b_attributes and v != ""
     }
+    logging.debug(f"parent_b_preformatted: {parent_b}")
 
     result = {}
     result[format_name(parent_a)] = parent_a
@@ -119,10 +121,11 @@ def parse_children_from_item(item):
         # "teacher_hr_child_a",
     ]
     child_a = {
-        (k.replace("_child_a", ""), v)
-        for k, v in item.items()
+        k.replace("_child_a", ""): v
+        for (k, v) in item.items()
         if k in child_a_attributes
     }
+    logging.debug(f"child_a_preformatted: {child_a}")
 
     child_b_attributes = [
         "name_last_child_b",
@@ -132,10 +135,11 @@ def parse_children_from_item(item):
         # "teacher_hr_child_b",
     ]
     child_b = {
-        (k.replace("_child_b", ""), v)
-        for k, v in item.items()
+        k.replace("_child_b", ""): v
+        for (k, v) in item.items()
         if k in child_b_attributes
     }
+    logging.debug(f"child_b_preformatted: {child_b}")
 
     result = {}
     result[format_name(child_a)] = child_a
@@ -146,6 +150,7 @@ def parse_children_from_item(item):
 
 def parse_family_from_item(item):
     parents = parse_parents_from_item(item)
+    logging.debug(f"parents_parsed: {parents}")
     children = parse_children_from_item(item)
     for _, child_data in children.items():
         child_data["parents"] = list(set(parents.keys()))
@@ -164,6 +169,7 @@ def parse_child_from_item(item):
         "language",
     ]
     child = {k: v for (k, v) in item.items() if k in child_attributes}
+    logging.debug(f"child_pre_parsed: {child}")
     result = {}
     result[format_name(child)] = child
     return result
@@ -320,11 +326,16 @@ class DirectorySheetData(SheetData):
     def converge_data(self):
         """make a list of children with their data and their parent/guardian info"""
         for item in self.data_structured:
+            logging.debug(f"item: {item}")
             family = parse_family_from_item(item)
+            logging.debug(f"family: {family}")
             for child_name, child_data in family["children"].items():
+                logging.debug(f"raw child: {child_name} {child_data}")
                 if child_name not in self.children:
+                    logging.debug("adding new child...")
                     self.children[child_name] = child_data
                 else:
+                    logging.debug("updating existing child...")
                     self.children[child_name].update(child_data)
             for parent_name, parent_data in family["parents"].items():
                 if parent_name not in self.parents:

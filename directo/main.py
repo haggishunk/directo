@@ -10,8 +10,21 @@ from directo.sheets import (
 from directo.docs import DirectoryDoc
 
 # The ID of a sample spreadsheet.
-directory_sheet_id = os.environ.get("DIRECTORY_SHEET_ID")
-roster_sheet_id = os.environ.get("ROSTER_SHEET_ID")
+DIRECTORY_SHEET_ID = os.environ.get("DIRECTORY_SHEET_ID")
+ROSTER_SHEET_ID = os.environ.get("ROSTER_SHEET_ID")
+
+ROSTER_SHEET_KWARGS = {
+    "tab_name": "Sheet1",
+    "col_start": "A",
+    "col_end": "E",
+    "row_start": "1"
+}
+DIRECTORY_SHEET_KWARGS = {
+    "tab_name": "working",
+    "col_start": "E",
+    "col_end": "AD",
+    "row_start": "1"
+}
 
 
 def make_class_roster(roster_data):
@@ -24,7 +37,6 @@ def make_class_roster(roster_data):
         doc.general_format_cells(font_size=9)
         doc.bold_cells_first_line()
     # another option is to make a new table for each grade-language
-    return
 
 
 def make_student_directory(roster_data):
@@ -35,10 +47,9 @@ def make_student_directory(roster_data):
     doc.unbroken_cells()
     doc.general_format_cells(font_size=9)
     doc.bold_cells_first_line()
-    return
 
 
-def get_directory_data(tab_name=None, col_start=None, col_end=None, row_start=None):
+def get_directory_data(directory_sheet_id, tab_name=None, col_start=None, col_end=None, row_start=None):
     directory_header_range = construct_sheet_range(
         tab_name=tab_name,
         col_start=col_start,
@@ -59,7 +70,7 @@ def get_directory_data(tab_name=None, col_start=None, col_end=None, row_start=No
     )
 
 
-def get_roster_data(tab_name=None, col_start=None, col_end=None, row_start=None):
+def get_roster_data(roster_sheet_id, tab_name=None, col_start=None, col_end=None, row_start=None):
     roster_header_range = construct_sheet_range(
         tab_name=tab_name,
         col_start=col_start,
@@ -87,9 +98,7 @@ def main():
         log_level = logging.WARN
     logging.basicConfig(level=log_level, stream=sys.stdout)
 
-    roster_data = get_roster_data(
-        tab_name="Sheet1", col_start="A", col_end="E", row_start="1"
-    )
+    roster_data = get_roster_data(ROSTER_SHEET_ID, **ROSTER_SHEET_KWARGS)
 
     if sys.argv[1] == "roster":
         print("Compiling roster...")
@@ -97,12 +106,16 @@ def main():
     elif sys.argv[1] == "directory":
         print("Compiling directory...")
         roster_data.enrich_roster_with_normalized_directory(
-            get_directory_data(
-                tab_name="working", col_start="E", col_end="AD", row_start="1"
-            )
+            get_directory_data(DIRECTORY_SHEET_ID, **DIRECTORY_SHEET_KWARGS)
         )
         make_student_directory(roster_data)
-
+    elif sys.argv[1] == "unrostered":
+        print("Finding unrostered children in directory data...")
+        di = get_directory_data(DIRECTORY_SHEET_ID, **DIRECTORY_SHEET_KWARGS)
+        ro = get_roster_data(ROSTER_SHEET_ID, **ROSTER_SHEET_KWARGS)
+        unrostered = [ch for ch in di.children.keys() if ch not in ro.children.keys()]
+        for ch in unrostered:
+            print(ch)
 
 if __name__ == "__main__":
     main()
