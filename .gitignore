@@ -1,3 +1,6 @@
+.tags
+.virtualenvs
+virtualenvs
 .envrc
 token.json
 credentials.json
